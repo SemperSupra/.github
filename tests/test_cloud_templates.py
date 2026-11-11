@@ -133,5 +133,89 @@ class CloudTemplatesTests(unittest.TestCase):
         self.assertNotIn("GOOGLE_APPLICATION_CREDENTIALS:",cb)
         self.assertNotIn("KAGGLE_API_TOKEN:",cb)
 
+
+class DriveArtifactTests(unittest.TestCase):
+    def fixture(self):
+        from scripts.cloud.artifact_manifest import build
+        temporary=tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root=Path(temporary.name)
+        (root/"payload").mkdir()
+        (root/"payload"/"metrics.json").write_text('{"status":"PASS"}')
+        (root/"payload"/"checkpoint.bin").write_bytes(b"public synthetic checkpoint"*1024)
+        manifest=build(root/"payload","exp-20261111-a01",
+                       "SemperSupra/latent-reasoning","a"*40,"private-research")
+        return root/"payload",manifest
+
+    def test_private_artifacts_route_to_drive(self):
+        from scripts.cloud.artifact_manifest import verify
+        root,manifest=self.fixture()
+        self.assertEqual({v["recommended_storage"] for v in manifest["files"]},{"drive"})
+        result=verify(root,manifest)
+        self.assertEqual(result["status"],"VERIFIED_LOCAL_NOT_UPLOADED")
+        self.assertEqual(result["file_count"],2)
+
+    def test_manifest_fails_on_modified_payload(self):
+        from scripts.cloud.artifact_manifest import verify
+        root,manifest=self.fixture()
+        (root/"metrics.json").write_text("TAMPERED")
+        with self.assertRaisesRegex(ValueError,"FILE_SIZE_MISMATCH|FILE_HASH_MISMATCH"):
+            verify(root,manifest)
+
+    def test_git_candidate_for_public_small_json(self):
+        from scripts.cloud.artifact_manifest import build
+        root,manifest=self.fixture()
+        public=build(root,"exp-20261111-a01",
+                     "SemperSupra/latent-reasoning","a"*40,"public-synthetic")
+        routes={v["relative_path"]:v["recommended_storage"] for v in public["files"]}
+        self.assertEqual(routes["metrics.json"],"git-candidate")
+        self.assertEqual(routes["checkpoint.bin"],"drive")
+
+    def test_drive_remote_rejects_traversal(self):
+        from scripts.cloud.drive_artifact_publish import sanitized_remote_prefix
+        for unsafe in ("gdrive:/root","gdrive:../escape","gdrive:folder/../../escape",
+                       "gdrive:foo//bar","gdrive:"):
+            with self.subTest(unsafe=unsafe):
+                with self.assertRaises(ValueError):
+                    sanitized_remote_prefix(unsafe)
+
+    def test_drive_selection_is_fixed(self):
+        from scripts.cloud.drive_artifact_publish import selection, remote_for
+        root,manifest=self.fixture()
+        rows=selection(manifest)
+        self.assertEqual(len(rows),2)
+        self.assertEqual(
+            remote_for("drive:SemperSupra/Research Experiments/Latent Reasoning",
+                       manifest,"checkpoint.bin"),
+            "drive:SemperSupra/Research Experiments/Latent Reasoning/exp-20261111-a01/checkpoint.bin")
+
+    def test_drive_immutable_upload_readback(self):
+        from unittest.mock import patch
+        from scripts.cloud.drive_artifact_publish import upload_and_verify
+        root,manifest=self.fixture()
+        rows=[r for r in manifest["files"] if r["relative_path"]=="metrics.json"]
+        seen=[]
+        def fake(argv, out=None):
+            seen.append(argv)
+            if argv[1]=="cat":
+                out.write((root/"metrics.json").read_bytes())
+        with patch("scripts.cloud.drive_artifact_publish.invoke",side_effect=fake):
+            result=upload_and_verify(root,manifest,"drive:SemperSupra/Research Experiments",rows)
+        self.assertTrue(result[0]["readback_verified"])
+        self.assertEqual(seen[0][0:3],["rclone","copyto","--immutable"])
+        self.assertEqual(seen[1][0:2],["rclone","cat"])
+
+    def test_drive_corrupt_readback_denied(self):
+        from unittest.mock import patch
+        from scripts.cloud.drive_artifact_publish import upload_and_verify
+        root,manifest=self.fixture()
+        rows=[r for r in manifest["files"] if r["relative_path"]=="metrics.json"]
+        def fake(argv,out=None):
+            if argv[1]=="cat":
+                out.write(b"CORRUPTED")
+        with patch("scripts.cloud.drive_artifact_publish.invoke",side_effect=fake):
+            with self.assertRaisesRegex(ValueError,"REMOTE_HASH_MISMATCH|REMOTE_SIZE_MISMATCH"):
+                upload_and_verify(root,manifest,"drive:SemperSupra/Research Experiments",rows)
+
 if __name__ == "__main__":
     unittest.main()
