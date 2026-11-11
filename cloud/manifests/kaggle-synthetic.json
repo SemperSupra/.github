@@ -1,0 +1,13 @@
+{
+  "schema": "semper-cloud-experiment/v1",
+  "experiment_id": "sample-kaggle-cpu-01",
+  "provider": "kaggle",
+  "accelerator": "cpu",
+  "source": "experiments/kaggle_synthetic.py",
+  "source_sha256": "157ebb5c976df46e378e782b3ddbfb87a6a37b1eaccd3a11e93725a0eab7270c",
+  "max_runtime_seconds": 300,
+  "receipt_file": "output/result.json",
+  "budget": {
+    "min_remaining_seconds": 600
+  }
+}
