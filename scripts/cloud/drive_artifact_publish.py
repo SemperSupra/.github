@@ -27,7 +27,8 @@ MAX_UPLOAD_BYTES = 2 * 1024**3
 MAX_FILES = 100
 
 def sanitized_remote_prefix(raw: str) -> str:
-    if not REMOTE.fullmatch(raw) or "//" in raw or any(x in raw.split(":")[1].split("/") for x in (".", "..")):
+    if (not REMOTE.fullmatch(raw) or raw.split(":", 1)[1].startswith("/")
+            or "//" in raw or any(x in raw.split(":", 1)[1].split("/") for x in (".", ".."))):
         raise ValueError("REMOTE_ROOT_INVALID")
     return raw.rstrip("/")
 
