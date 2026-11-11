@@ -32,6 +32,13 @@ def canonical(v):
 def digest(b):
     return hashlib.sha256(b).hexdigest()
 
+def digest_file(path: Path):
+    h = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
 def safe_files(root: Path):
     if root.is_symlink() or not root.is_dir():
         raise ValueError("BUNDLE_ROOT_INVALID")
@@ -78,7 +85,7 @@ def build(root: Path, run_id: str, repo: str, source_sha: str, classification: s
     for rel,p in safe_files(root):
         size=p.stat().st_size
         rows.append({"relative_path": rel, "size_bytes": size,
-                     "sha256": digest(p.read_bytes()),
+                     "sha256": digest_file(p),
                      "recommended_storage": storage_route(size,classification,p.suffix.lower())})
     return {
         "schema": SCHEMA,
@@ -112,7 +119,7 @@ def verify(root: Path, manifest: dict):
         size=p.stat().st_size
         if not isinstance(x.get("size_bytes"),int) or x["size_bytes"]!=size:
             raise ValueError("FILE_SIZE_MISMATCH")
-        if not SHA.fullmatch(str(x.get("sha256",""))) or x["sha256"]!=digest(p.read_bytes()):
+        if not SHA.fullmatch(str(x.get("sha256",""))) or x["sha256"]!=digest_file(p):
             raise ValueError("FILE_HASH_MISMATCH")
         if x.get("recommended_storage")!=storage_route(size, manifest["classification"],p.suffix.lower()):
             raise ValueError("STORAGE_ROUTE_TAMPERED")
