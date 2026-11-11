@@ -1,0 +1,48 @@
+name: shared-cloud-template-preflight
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/reusable-*"
+      - ".github/workflows/cloud-template-preflight.yml"
+      - "scripts/cloud/**"
+      - "tests/test_cloud_templates.py"
+      - "experiments/**"
+      - "cloud/manifests/**"
+      - "docs/cloud-workflows-v1.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Compile, reject bad manifests and validate entitlement parser
+        run: |
+          python3 -m py_compile scripts/cloud/*.py tests/test_cloud_templates.py
+          python3 -m unittest discover -s tests -p "test_cloud_templates.py" -v
+      - name: Check both sample source-locked manifests offline
+        run: |
+          python3 scripts/cloud/cloud_contract.py --provider kaggle \
+            --manifest cloud/manifests/kaggle-synthetic.json --workspace . \
+            --output /tmp/kaggle-plan.json
+          python3 scripts/cloud/cloud_contract.py --provider colab \
+            --manifest cloud/manifests/colab-synthetic.json --workspace . \
+            --output /tmp/colab-plan.json
+
+  actual-kaggle-workflow-call:
+    uses: ./.github/workflows/reusable-kaggle-v1.yml
+    with:
+      manifest_path: cloud/manifests/kaggle-synthetic.json
+      operation: plan
+
+  actual-colab-workflow-call:
+    uses: ./.github/workflows/reusable-colab-v1.yml
+    with:
+      manifest_path: cloud/manifests/colab-synthetic.json
+      operation: plan
