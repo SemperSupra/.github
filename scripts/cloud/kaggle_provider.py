@@ -91,6 +91,18 @@ def submit(api, m, workspace):
     return {"state": "SUBMITTED_NOT_COMPLETED", "native_ref": target,
             "native_version": native, "quota_seconds_before": remaining}
 
+def require_native_version(api, user, slug, expected):
+    # Inspect the provider's authoritative latest native version. This
+    # prevents an old receipt from being silently attached to a new run.
+    from kagglesdk.kernels.types.kernels_api_service import ApiGetKernelRequest
+    req = ApiGetKernelRequest()
+    req.user_name, req.kernel_slug = user, slug
+    with api.build_kaggle_client() as client:
+        details = client.kernels.kernels_api_client.get_kernel(req)
+    actual = getattr(getattr(details, "metadata", None), "current_version_number", None)
+    if not isinstance(actual, int) or actual != expected:
+        raise ValueError("NATIVE_VERSION_DRIFT_OR_UNKNOWN")
+
 def observe(api, m, native_version):
     api.authenticate()
     username = api.get_config_value(api.CONFIG_NAME_USER)
@@ -99,8 +111,10 @@ def observe(api, m, native_version):
         raise ValueError("NATIVE_VERSION_REQUIRED")
     # Protect against stale version and accidental observation of a new run.
     # Exact-version native acceptance must be corroborated by a project verifier.
+    require_native_version(api, username, f"semper-{m['experiment_id']}", native_version)
     target = f"{ref}/{native_version}"
     status = str(getattr(api.kernels_status(target), "status", "UNKNOWN")).upper()
+    require_native_version(api, username, f"semper-{m['experiment_id']}", native_version)
     if any(s in status for s in ("RUNNING", "QUEUED", "PENDING", "STARTING")):
         return {"state": "NONTERMINAL", "native_ref": ref, "native_version": native_version}
     if any(s in status for s in ("ERROR", "FAIL", "CANCEL")):
