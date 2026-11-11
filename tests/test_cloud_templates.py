@@ -45,6 +45,16 @@ class CloudTemplatesTests(unittest.TestCase):
                 self.assertEqual(outcome["source_sha256"], m["source_sha256"])
                 self.assertNotIn("token", str(outcome).lower())
 
+    def test_manifest_path_outside_workspace_denied(self):
+        root, path, m = self.fixture("kaggle")
+        outside = root.parent / ("outside-" + root.name + ".json")
+        try:
+            outside.write_text(json.dumps(m))
+            with self.assertRaisesRegex(ValueError, "MANIFEST_NOT_IN_WORKSPACE"):
+                load(outside, root, "kaggle")
+        finally:
+            outside.unlink(missing_ok=True)
+
     def test_source_change_denied(self):
         root,path,m=self.fixture()
         (root / m["source"]).write_text("print('other')\n")
