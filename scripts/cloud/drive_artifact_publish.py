@@ -16,7 +16,10 @@ import subprocess
 import sys
 import tempfile
 
-from artifact_manifest import verify, canonical
+try:
+    from .artifact_manifest import verify
+except ImportError:  # direct CLI script invocation
+    from artifact_manifest import verify
 
 REMOTE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{1,31}:[A-Za-z0-9_ .()/-]{1,240}$")
 TIMEOUT = 900
