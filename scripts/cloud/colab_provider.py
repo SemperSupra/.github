@@ -34,14 +34,14 @@ def execute(m, workspace, output):
     flags = ([] if accelerator == "cpu" else
              ["--tpu", accelerator] if accelerator.startswith("v") else
              ["--gpu", accelerator])
-    started = False
+    allocation_attempted = False
     verified_cleanup = False
     downloaded = None
     failure = None
     before = pre["balance_ccu"]
     try:
+        allocation_attempted = True
         cli(["new", "-s", session, *flags], 150)
-        started = True
         cli(["exec", "-s", session, "-f", str(workspace / m["source"])],
             m["max_runtime_seconds"] + 60)
         # Project owns remote receipt contract; never trust it without the
@@ -55,7 +55,9 @@ def execute(m, workspace, output):
     except Exception:
         failure = "COLAB_EXEC_OR_RECOVERY_UNKNOWN"
     finally:
-        if started:
+        # Even if allocation timed out, cleanup the uniquely named session;
+        # an unknown provider response must not leave an unobserved VM.
+        if allocation_attempted:
             try:
                 cli(["stop", "-s", session], 90)
                 verified_cleanup = True
