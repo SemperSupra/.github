@@ -1,0 +1,15 @@
+{
+  "schema": "semper-cloud-experiment/v1",
+  "experiment_id": "sample-colab-cpu-01",
+  "provider": "colab",
+  "accelerator": "cpu",
+  "source": "experiments/colab_synthetic.py",
+  "source_sha256": "53bce60a836bd81c30ae5385b6d6375c355f5793eeb3cd6a923247a15fa7ead6",
+  "max_runtime_seconds": 300,
+  "receipt_file": "output/result.json",
+  "budget": {
+    "max_ccu": 2,
+    "reserve_ccu": 20,
+    "assumed_max_ccu_per_hour": 12
+  }
+}
