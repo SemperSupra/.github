@@ -1,0 +1,113 @@
+name: Shared bounded Kaggle job v1
+on:
+  workflow_call:
+    inputs:
+      manifest_path:
+        description: Path to a reviewed source-hashed JSON manifest in caller repository
+        type: string
+        required: true
+      operation:
+        description: Typed operation; PR admission always plan-only
+        type: string
+        default: plan
+      native_version:
+        type: number
+        default: 0
+    secrets:
+      KAGGLE_API_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: caller
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .shared-cloud
+          persist-credentials: false
+      - name: Enforce caller op and public PR boundary
+        env:
+          OPERATION: ${{ inputs.operation }}
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+        run: |
+          case "$OPERATION" in plan|submit|observe) ;; *) exit 2 ;; esac
+          if [[ "$IS_PR" == "true" && "$OPERATION" != "plan" ]]; then
+            echo "PR_ALLOWED_OPERATION=PLAN_ONLY"; exit 2
+          fi
+      - name: Offline source-lock and quota-policy preflight
+        env:
+          MANIFEST: ${{ inputs.manifest_path }}
+        run: |
+          python3 .shared-cloud/scripts/cloud/cloud_contract.py \
+            --provider kaggle \
+            --manifest "caller/$MANIFEST" --workspace caller \
+            --output "$RUNNER_TEMP/cloud-plan.json"
+      - name: Save non-secret source digest and plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaggle-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/cloud-plan.json
+          retention-days: 14
+
+  provider:
+    needs: plan
+    if: inputs.operation != 'plan' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    environment: kaggle-research
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    concurrency:
+      group: kaggle-shared-provider-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: caller
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .shared-cloud
+          persist-credentials: false
+      - name: Revalidate source lock before accessing secret
+        env:
+          MANIFEST: ${{ inputs.manifest_path }}
+        run: |
+          python3 .shared-cloud/scripts/cloud/cloud_contract.py \
+            --provider kaggle --manifest "caller/$MANIFEST" --workspace caller \
+            --output "$RUNNER_TEMP/cloud-plan.json"
+      - name: Install reviewed Kaggle Python client
+        run: |
+          python3 -m venv .venv-kaggle
+          .venv-kaggle/bin/python -m pip install --disable-pip-version-check kaggle==2.2.4
+      - name: One provider operation; secret never on PR
+        env:
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+          MANIFEST: ${{ inputs.manifest_path }}
+          ACTION: ${{ inputs.operation }}
+          VERSION: ${{ inputs.native_version }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$KAGGLE_API_TOKEN" ]]; then echo "KAGGLE_KEY_MISSING"; exit 2; fi
+          .venv-kaggle/bin/python .shared-cloud/scripts/cloud/kaggle_provider.py \
+            --workspace caller --manifest "caller/$MANIFEST" \
+            --action "$ACTION" --native-version "$VERSION" \
+            --output "$RUNNER_TEMP/kaggle-provider-receipt.json"
+      - name: Preserve allowlisted control receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaggle-provider-${{ github.run_id }}
+          path: ${{ runner.temp }}/kaggle-provider-receipt.json
+          retention-days: 14
+          if-no-files-found: warn
