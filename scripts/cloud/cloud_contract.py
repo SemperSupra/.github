@@ -37,6 +37,10 @@ def valid_path(raw: object, *, root: str) -> Path:
     return Path(*p.parts)
 
 def load(manifest_path: Path, workspace: Path, provider: str) -> dict:
+    workspace = workspace.resolve(strict=True)
+    if (manifest_path.is_symlink() or not manifest_path.resolve().is_relative_to(workspace)
+            or not manifest_path.is_file()):
+        raise ValueError("MANIFEST_NOT_IN_WORKSPACE")
     raw = manifest_path.read_bytes()
     if len(raw) > 16384:
         raise ValueError("MANIFEST_TOO_LARGE")
