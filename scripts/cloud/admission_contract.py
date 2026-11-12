@@ -153,9 +153,14 @@ def propose(requests: list[dict], approvals: list[str], ledger: dict,
     if not isinstance(requests,list) or len(requests) > MAX_REQUESTS:
         raise ValueError("REQUEST_LIST_BOUND")
     if not isinstance(approvals,list) or len(approvals) > MAX_REQUESTS or any(
-            not isinstance(x,str) or IDENTIFIER.fullmatch(x) is None for x in approvals):
+            not isinstance(x,dict) or set(x) != {"request_id","request_sha256"}
+            or not isinstance(x["request_id"],str)
+            or IDENTIFIER.fullmatch(x["request_id"]) is None
+            or not isinstance(x["request_sha256"],str)
+            or SHA.fullmatch(x["request_sha256"]) is None for x in approvals):
         raise ValueError("APPROVAL_INPUT_INVALID")
-    if len(approvals)!=len(set(approvals)):
+    approved={x["request_id"]:x["request_sha256"] for x in approvals}
+    if len(approved)!=len(approvals):
         raise ValueError("DUPLICATE_APPROVAL")
     clean=[validate_request(r) for r in requests]
     ids=[r["request_id"] for r in clean]
@@ -178,7 +183,8 @@ def propose(requests: list[dict], approvals: list[str], ledger: dict,
                 "next_action":"RECONCILE_ORPHAN_NATIVE_NOT_SUBMIT"}
     permitted=[r for r in clean if r["provider"]==ledger["provider"]
                and r["account_alias"]==ledger["account_alias"]
-               and r["request_id"] in approvals]
+               and approved.get(r["request_id"]) == digest(r)
+               and utc(r["submitted_utc"]) <= now]
     # Request approval is independent of request-supplied fields and must be
     # provided by the owning DLE / trusted authorization boundary.
     permitted.sort(key=lambda r:(-r["priority"],utc(r["submitted_utc"]),
