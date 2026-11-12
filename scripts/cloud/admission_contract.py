@@ -279,7 +279,8 @@ def read_strict_json(path: Path) -> object:
     The independent owner approval must still bind the exact normalized
     request digest; this parser does not sign, authorize, claim or submit.
     """
-    raw = path.read_bytes()
+    with path.open("rb") as source:
+        raw = source.read(MAX_INPUT_BYTES + 1)
     fail(len(raw) <= MAX_INPUT_BYTES, "INPUT_TOO_LARGE")
 
     def unique_keys(pairs):
