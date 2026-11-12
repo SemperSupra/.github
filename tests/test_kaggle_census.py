@@ -85,5 +85,28 @@ class KaggleAccountCensusTests(unittest.TestCase):
         self.assertIn("github.event_name != 'pull_request'",yaml)
         self.assertIn("environment: kaggle-research",yaml)
 
+    def test_false_terminal_substring_does_not_mark_account_idle(self):
+        for value in ("NOT_COMPLETE", "INCOMPLETE", "NOT_SUCCESS",
+                      "UNKNOWN_CANCEL", "STILL_RUNNING_UNKNOWN"):
+            with self.subTest(value=value):
+                api = Fake({"example/foreign":value})
+                with self.assertRaisesRegex(ValueError, "KERNEL_STATUS_UNKNOWN"):
+                    account_census(api)
+                self.assertNotIn("kernels_push", api.calls)
+
+    def test_no_duplicate_or_active_rejects_false_terminal(self):
+        api = Fake({"example/foreign":"NOT_COMPLETE"})
+        with self.assertRaisesRegex(ValueError, "KERNEL_STATUS_UNKNOWN"):
+            no_duplicate_or_active(api, "example/new-study")
+
+    def test_native_known_enum_values_are_exact(self):
+        self.assertEqual(kernel_status("KernelStatus.QUEUED"), "QUEUED")
+        self.assertEqual(kernel_status("KernelStatus.COMPLETE"), "COMPLETE")
+        self.assertEqual(kernel_status("COMPLETED"), "COMPLETED")
+        with self.assertRaisesRegex(ValueError, "KERNEL_STATUS_UNKNOWN"):
+            kernel_status("CustomState.COMPLETE")
+        api = Fake({"example/foreign":"KernelStatus.RUNNING"})
+        self.assertEqual(account_census(api)["native_active_count"],1)
+
 if __name__ == "__main__":
     unittest.main()
