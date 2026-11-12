@@ -217,5 +217,99 @@ class DriveArtifactTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"REMOTE_HASH_MISMATCH|REMOTE_SIZE_MISMATCH"):
                 upload_and_verify(root,manifest,"drive:SemperSupra/Research Experiments",rows)
 
+
+class ColabExecutionGuardTests(unittest.TestCase):
+    def fixture(self):
+        temp=tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root=Path(temp.name)
+        (root/"experiments").mkdir()
+        (root/"experiments"/"job.py").write_text("print('hello')\n")
+        manifest={"experiment_id":"colab-guard-001",
+                  "accelerator":"T4",
+                  "max_runtime_seconds":900,
+                  "source":"experiments/job.py",
+                  "source_sha256":"a"*64,
+                  "receipt_file":"output/result.json",
+                  "budget":{"max_ccu":5,"reserve_ccu":20,
+                            "assumed_max_ccu_per_hour":12}}
+        return root, manifest
+
+    def test_post_allocation_rate_above_ceiling_stops_without_exec(self):
+        from unittest.mock import patch
+        from scripts.cloud import colab_provider as provider
+        root,m=self.fixture()
+        calls=[]
+        def fake_cli(args,timeout):
+            calls.append(args[0])
+        with patch.object(provider,"collect",return_value={
+                "admission":"BUDGET_PRECHECK_PASS_NOT_RESOURCE_RESERVED",
+                "balance_ccu":100.0}), patch.object(provider,"read_snapshot",
+                return_value={"active_assignments":1,"rate_ccu_per_hour":25.0}
+                ), patch.object(provider,"cli",side_effect=fake_cli):
+            with self.assertRaisesRegex(ValueError,"EXECUTION_OR_CLEANUP"):
+                provider.execute(m,root,root)
+        self.assertEqual(calls,["new","stop"])
+
+    def test_zero_gpu_rate_is_unqualified_not_free_allocation_proof(self):
+        from unittest.mock import patch
+        from scripts.cloud import colab_provider as provider
+        root,m=self.fixture()
+        calls=[]
+        with patch.object(provider,"collect",return_value={
+                "admission":"BUDGET_PRECHECK_PASS_NOT_RESOURCE_RESERVED",
+                "balance_ccu":100.0}), patch.object(provider,"read_snapshot",
+                return_value={"active_assignments":1,"rate_ccu_per_hour":0.0}
+                ), patch.object(provider,"cli",
+                side_effect=lambda args,timeout:calls.append(args[0])):
+            with self.assertRaises(ValueError):
+                provider.execute(m,root,root)
+        self.assertEqual(calls,["new","stop"])
+
+    def test_bounded_colab_path_retrieves_receipt_and_stops(self):
+        from unittest.mock import patch
+        from scripts.cloud import colab_provider as provider
+        root,m=self.fixture()
+        calls=[]
+        snapshots=iter([
+            {"admission":"BUDGET_PRECHECK_PASS_NOT_RESOURCE_RESERVED",
+             "balance_ccu":100.0},
+            {"admission":"BUDGET_PRECHECK_PASS_NOT_RESOURCE_RESERVED",
+             "balance_ccu":98.7},
+        ])
+        def fake_cli(args,timeout):
+            calls.append(args[0])
+            if args[0]=="download":
+                Path(args[-1]).write_text('{"status":"SYNTHETIC"}')
+        with patch.object(provider,"collect",side_effect=lambda budget:next(snapshots)),\
+             patch.object(provider,"read_snapshot",
+                 return_value={"active_assignments":1,"rate_ccu_per_hour":3.0}),\
+             patch.object(provider,"cli",side_effect=fake_cli):
+            outcome=provider.execute(m,root,root)
+        self.assertEqual(calls,["new","exec","download","stop"])
+        self.assertEqual(outcome["observed_ccu_delta"],1.3)
+        self.assertTrue(outcome["known_session_stopped"])
+        self.assertEqual(outcome["projected_runtime_ccu"],.75)
+        self.assertEqual(outcome["entitlement_scope"],"PAID_CCU_ONLY_NOT_FREE_GPU_QUOTA")
+
+    def test_meter_unknown_never_accepts_execution(self):
+        from unittest.mock import patch
+        from scripts.cloud import colab_provider as provider
+        root,m=self.fixture()
+        calls=[]
+        def fake_cli(args,timeout):
+            calls.append(args[0])
+            if args[0]=="download":
+                Path(args[-1]).write_text("{}")
+        with patch.object(provider,"collect",side_effect=[
+            {"admission":"BUDGET_PRECHECK_PASS_NOT_RESOURCE_RESERVED","balance_ccu":100.0},
+            ValueError("account rate unavailable")]),\
+            patch.object(provider,"read_snapshot",
+                return_value={"active_assignments":1,"rate_ccu_per_hour":3.0}),\
+            patch.object(provider,"cli",side_effect=fake_cli):
+            with self.assertRaisesRegex(ValueError,"EXECUTION_OR_CLEANUP_OR_METER"):
+                provider.execute(m,root,root)
+        self.assertEqual(calls,["new","exec","download","stop"])
+
 if __name__ == "__main__":
     unittest.main()
