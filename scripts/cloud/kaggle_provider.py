@@ -6,6 +6,7 @@ It never runs on PRs. Kaggle native job version and source digest are retained.
 Unknown quota, active jobs or provider semantics => deny, never retry blindly.
 """
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -60,6 +61,62 @@ def no_duplicate_or_active(api, target):
             raise ValueError("PAGE_LOOP")
         seen.add(token)
     raise ValueError("PAGINATION_BOUND")
+
+def account_census(api):
+    """One credentialed GET-only account observation; never submits.
+
+    Only aggregate counts and remaining GPU/TPU seconds leave the trusted
+    environment. Unknown state and incomplete pagination fail closed.
+    """
+    api.authenticate()
+    quota = api.quota_view()
+    result = {}
+    for resource, slot in (("gpu-t4x2", getattr(quota, "gpu_quota", None)),
+                           ("tpu-v5e8", getattr(quota, "tpu_quota", None))):
+        if slot is None or getattr(slot, "total_time_allowed", None) is None or \
+                getattr(slot, "time_used", None) is None:
+            raise ValueError("ACCOUNT_QUOTA_UNKNOWN")
+        allowed = int(slot.total_time_allowed.total_seconds())
+        spent = int(slot.time_used.total_seconds())
+        if not 0 <= spent <= allowed:
+            raise ValueError("ACCOUNT_QUOTA_INVALID")
+        result[resource] = allowed - spent
+    token = None
+    seen = set()
+    active = 0
+    checked = 0
+    for _ in range(20):
+        opts = {"mine": True, "page_size": 100}
+        if token:
+            opts["page_token"] = token
+        page = api.kernels_list_with_response(**opts)
+        if page is None or not hasattr(page, "kernels"):
+            raise ValueError("ACCOUNT_KERNEL_PAGE_UNKNOWN")
+        for item in page.kernels or []:
+            ref = getattr(item, "ref", None)
+            if not isinstance(ref, str) or "/" not in ref:
+                raise ValueError("ACCOUNT_KERNEL_REF_UNKNOWN")
+            status = str(getattr(api.kernels_status(ref), "status", "UNKNOWN")).upper()
+            checked += 1
+            if any(x in status for x in ("RUNNING", "QUEUED", "PENDING", "STARTING")):
+                active += 1
+            elif not any(x in status for x in ("COMPLETE", "SUCCESS", "ERROR", "FAIL", "CANCEL")):
+                raise ValueError("ACCOUNT_KERNEL_STATUS_UNKNOWN")
+        token = getattr(page, "next_page_token", None)
+        if not token:
+            return {
+                "schema": "semper-kaggle-account-census/v1",
+                "state": "OBSERVED",
+                "observed_utc": datetime.now(timezone.utc).isoformat(),
+                "quota_remaining_seconds": result,
+                "native_active_count": active,
+                "kernels_examined": checked,
+                "scope": "one authenticated Kaggle account; aggregate only",
+            }
+        if not isinstance(token,str) or token in seen:
+            raise ValueError("ACCOUNT_KERNEL_PAGE_LOOP")
+        seen.add(token)
+    raise ValueError("ACCOUNT_KERNEL_PAGINATION_BOUND")
 
 def submit(api, m, workspace):
     api.authenticate()
@@ -134,24 +191,31 @@ def observe(api, m, native_version):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--manifest", type=Path, required=True)
-    p.add_argument("--workspace", type=Path, required=True)
-    p.add_argument("--action", choices=("submit", "observe"), required=True)
+    p.add_argument("--manifest", type=Path)
+    p.add_argument("--workspace", type=Path)
+    p.add_argument("--action", choices=("census", "submit", "observe"), required=True)
     p.add_argument("--native-version", type=int, default=0)
     p.add_argument("--output", type=Path, required=True)
     args = p.parse_args()
     result = {"schema": "semper-cloud-provider/v1", "provider": "kaggle"}
     try:
-        m = load(args.manifest, args.workspace, "kaggle")
         from kaggle import api
-        if args.action == "submit":
+        if args.action == "census":
             if args.native_version:
-                raise ValueError("NO_VERSION_ON_SUBMIT")
-            payload = submit(api, m, args.workspace)
+                raise ValueError("NO_VERSION_ON_CENSUS")
+            result.update(account_census(api))
         else:
-            payload = observe(api, m, args.native_version)
-        result.update(payload, experiment_id=m["experiment_id"],
-                      source_sha256=m["source_sha256"])
+            if args.manifest is None or args.workspace is None:
+                raise ValueError("MANIFEST_REQUIRED")
+            m = load(args.manifest, args.workspace, "kaggle")
+            if args.action == "submit":
+                if args.native_version:
+                    raise ValueError("NO_VERSION_ON_SUBMIT")
+                payload = submit(api, m, args.workspace)
+            else:
+                payload = observe(api, m, args.native_version)
+            result.update(payload, experiment_id=m["experiment_id"],
+                          source_sha256=m["source_sha256"])
         status = 0
     except Exception:
         # Do not print exception details (may contain provider URLs/headers).
