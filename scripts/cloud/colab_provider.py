@@ -13,7 +13,7 @@ from pathlib import Path
 import subprocess
 
 from cloud_contract import load
-from colab_usage import collect
+from colab_usage import collect, read_snapshot
 
 def cli(argv, timeout):
     try:
@@ -42,6 +42,19 @@ def execute(m, workspace, output):
     try:
         allocation_attempted = True
         cli(["new", "-s", session, *flags], 150)
+        # Re-measure the actual post-allocation burn rate BEFORE launching
+        # the experiment. Idle preflight cannot price a future accelerator.
+        allocated = read_snapshot()
+        observed_rate = allocated["rate_ccu_per_hour"]
+        if allocated["active_assignments"] < 1:
+            raise ValueError("COLAB_ALLOCATION_NOT_ATTESTED")
+        if accelerator != "cpu" and observed_rate <= 0:
+            raise ValueError("COLAB_ACCELERATOR_RATE_NOT_ATTESTED")
+        if observed_rate > m["budget"]["assumed_max_ccu_per_hour"]:
+            raise ValueError("COLAB_ALLOCATION_RATE_ABOVE_BUDGET")
+        projected = observed_rate * m["max_runtime_seconds"] / 3600
+        if projected > m["budget"]["max_ccu"]:
+            raise ValueError("COLAB_PROJECTED_CCU_BUDGET_EXCEEDED")
         cli(["exec", "-s", session, "-f", str(workspace / m["source"])],
             m["max_runtime_seconds"] + 60)
         # Project owns remote receipt contract; never trust it without the
@@ -79,6 +92,9 @@ def execute(m, workspace, output):
         "scientific_unverified_sha256": downloaded,
         "balance_before_ccu": before, "balance_after_ccu": after,
         "observed_ccu_delta": delta,
+        "allocated_rate_ccu_per_hour": observed_rate,
+        "projected_runtime_ccu": round(projected, 6),
+        "entitlement_scope": "PAID_CCU_ONLY_NOT_FREE_GPU_QUOTA",
         "ccu_budget_exceeded": delta > m["budget"]["max_ccu"],
         "known_session_stopped": verified_cleanup,
         "meter_boundary": "Charges may settle after observation. Query account again later.",
