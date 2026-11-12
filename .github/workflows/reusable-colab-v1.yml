@@ -1,0 +1,102 @@
+name: Shared conservative Colab job v1
+on:
+  workflow_call:
+    inputs:
+      manifest_path:
+        description: Source-hashed JSON manifest in caller repository
+        required: true
+        type: string
+      operation:
+        description: plan on public runner; usage/run only on ADC-equipped local runner
+        required: false
+        type: string
+        default: plan
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: caller
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .shared-cloud
+          persist-credentials: false
+      - name: Public operations cannot use authenticated Colab
+        env:
+          OPERATION: ${{ inputs.operation }}
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+        run: |
+          case "$OPERATION" in plan|usage|run) ;; *) exit 2 ;; esac
+          if [[ "$IS_PR" == "true" && "$OPERATION" != "plan" ]]; then
+            echo "PR_ALLOWED_OPERATION=PLAN_ONLY"; exit 2
+          fi
+      - name: Offline source-lock and prospective CCU budget check
+        env:
+          MANIFEST: ${{ inputs.manifest_path }}
+        run: |
+          python3 .shared-cloud/scripts/cloud/cloud_contract.py \
+            --provider colab --manifest "caller/$MANIFEST" --workspace caller \
+            --output "$RUNNER_TEMP/cloud-plan.json"
+      - name: Store non-secret plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: colab-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/cloud-plan.json
+          retention-days: 14
+
+  trusted-colab:
+    needs: plan
+    if: inputs.operation != 'plan' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    # Do not use a public GHA runner for personal Colab ADC credentials.
+    # Register a dedicated local runner only after independent security review.
+    runs-on: [self-hosted, Linux, X64, colab-adc]
+    environment: colab-research
+    timeout-minutes: 75
+    concurrency:
+      group: colab-shared-provider-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: caller
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .shared-cloud
+          persist-credentials: false
+      - name: Revalidate manifest and source before provider access
+        env:
+          MANIFEST: ${{ inputs.manifest_path }}
+        run: |
+          python3 .shared-cloud/scripts/cloud/cloud_contract.py \
+            --provider colab --manifest "caller/$MANIFEST" --workspace caller \
+            --output "$RUNNER_TEMP/cloud-plan.json"
+      - name: Read current Colab entitlement and run at most one bounded session
+        env:
+          MANIFEST: ${{ inputs.manifest_path }}
+          ACTION: ${{ inputs.operation }}
+        run: |
+          set -euo pipefail
+          command -v colab >/dev/null
+          python3 .shared-cloud/scripts/cloud/colab_provider.py \
+            --manifest "caller/$MANIFEST" --workspace caller \
+            --action "$ACTION" --output "$RUNNER_TEMP/colab-control-receipt.json"
+      - name: Store sanitized Colab receipt (never ADC material)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: colab-control-${{ github.run_id }}
+          path: ${{ runner.temp }}/colab-control-receipt.json
+          retention-days: 14
+          if-no-files-found: warn
