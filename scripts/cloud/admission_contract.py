@@ -138,8 +138,11 @@ def validate_census(census: dict, ledger: dict, now: datetime) -> None:
     fail(type(census["active_assignments"]) is int and
          census["active_assignments"] >= 0, "ASSIGNMENTS_UNKNOWN")
     if ledger["provider"]=="kaggle":
-        fail(type(census["quota_remaining_seconds"]) is int and
-             census["quota_remaining_seconds"] >= 0, "KAGGLE_QUOTA_UNKNOWN")
+        quotas=census["quota_remaining_seconds"]
+        fail(isinstance(quotas,dict) and
+             set(quotas)=={"gpu-t4x2","tpu-v5e8"} and
+             all(type(x) is int and x >= 0 for x in quotas.values()),
+             "KAGGLE_QUOTA_UNKNOWN")
     else:
         for key in ("balance_ccu","reserved_ccu"):
             fail(type(census[key]) in (int,float) and 0 <= census[key] <= 100000,
@@ -191,7 +194,11 @@ def propose(requests: list[dict], approvals: list[str], ledger: dict,
                                  r["request_id"]))
     for r in permitted:
         if ledger["provider"]=="kaggle":
-            if census["quota_remaining_seconds"] < r["max_runtime_seconds"]+300:
+            # GPU and TPU are separately metered; never let healthy GPU
+            # quota authorize a scarce/unknown TPU request, or vice versa.
+            if (r["resource"] != "cpu" and
+                census["quota_remaining_seconds"][r["resource"]] <
+                r["max_runtime_seconds"]+300):
                 continue
         else:
             if census["balance_ccu"] < r["max_ccu"]+census["reserved_ccu"]:
