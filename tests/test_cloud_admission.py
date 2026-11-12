@@ -43,7 +43,8 @@ def census(provider="kaggle"):
         "observed_utc":"2026-11-12T11:59:00Z",
         "status":"OBSERVED",
         "native_active_count":0, "active_assignments":0,
-        "quota_remaining_seconds":3600 if provider=="kaggle" else None,
+        "quota_remaining_seconds":{"gpu-t4x2":3600,"tpu-v5e8":3600}
+        if provider=="kaggle" else None,
         "balance_ccu":75 if provider=="colab" else None,
         "reserved_ccu":20 if provider=="colab" else None,
     }
@@ -140,12 +141,31 @@ class AdmissionContractTests(unittest.TestCase):
             propose([r],approvals(r),ledger(),bad,NOW)
 
     def test_insufficient_kaggle_quota_does_not_admit(self):
-        r=req(); c=census();c["quota_remaining_seconds"]=899
+        r=req(); c=census();c["quota_remaining_seconds"]["gpu-t4x2"]=899
         self.assertEqual(propose([r],approvals(r),ledger(),c,NOW)["state"],
                          "NO_ELIGIBLE_APPROVED_REQUEST")
-        c["quota_remaining_seconds"]=None
+        c["quota_remaining_seconds"]["gpu-t4x2"]=None
         with self.assertRaisesRegex(ValueError,"QUOTA_UNKNOWN"):
             propose([r],approvals(r),ledger(),c,NOW)
+
+    def test_gpu_balance_cannot_authorize_tpu_queue(self):
+        r=req()
+        r["resource"]="tpu-v5e8"
+        c=census()
+        c["quota_remaining_seconds"]={"gpu-t4x2":12000,"tpu-v5e8":100}
+        self.assertEqual(propose([r],approvals(r),ledger(),c,NOW)["state"],
+                         "NO_ELIGIBLE_APPROVED_REQUEST")
+        c["quota_remaining_seconds"]["tpu-v5e8"]=900
+        self.assertEqual(propose([r],approvals(r),ledger(),c,NOW)["state"],
+                         "ADMISSIBLE_NOT_CLAIMED")
+
+    def test_kaggle_cpu_requires_no_accelerator_quota(self):
+        r=req()
+        r["resource"]="cpu"
+        c=census()
+        c["quota_remaining_seconds"]={"gpu-t4x2":0,"tpu-v5e8":0}
+        self.assertEqual(propose([r],approvals(r),ledger(),c,NOW)["state"],
+                         "ADMISSIBLE_NOT_CLAIMED")
 
     def test_insufficient_colab_balance_does_not_admit(self):
         r=req(provider="colab");c=census("colab");c["balance_ccu"]=22
