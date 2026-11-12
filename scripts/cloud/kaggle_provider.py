@@ -18,6 +18,24 @@ try:
 except ImportError:  # standalone GitHub Actions entrypoint
     from cloud_contract import load
 
+# Exact known native states; substring checks such as "NOT_COMPLETE"
+# can otherwise misclassify an unknown account job as terminal/idle.
+ACTIVE_STATES = frozenset(("RUNNING", "QUEUED", "PENDING", "STARTING"))
+TERMINAL_STATES = frozenset((
+    "COMPLETE", "COMPLETED", "SUCCESS", "ERROR", "FAIL", "FAILED",
+    "CANCEL", "CANCELED", "CANCELLED",
+))
+
+def kernel_status(raw):
+    state = str(raw).strip().upper()
+    if "." in state:
+        prefix, state = state.rsplit(".", 1)
+        if not prefix.endswith("STATUS"):
+            raise ValueError("KERNEL_STATUS_UNKNOWN")
+    if state not in ACTIVE_STATES and state not in TERMINAL_STATES:
+        raise ValueError("KERNEL_STATUS_UNKNOWN")
+    return state
+
 def quota_or_deny(api, m):
     if m["accelerator"] == "cpu":
         return "CPU_QUOTA_NOT_APPLICABLE"
@@ -49,10 +67,10 @@ def no_duplicate_or_active(api, target):
             # Account-wide exclusion, not just this framework's namespace.
             # Kaggle quota and accelerator allocations are shared across
             # independent projects, including earlier latent/ad-rdte jobs.
-            status = str(getattr(api.kernels_status(ref), "status", "UNKNOWN")).upper()
-            if any(x in status for x in ("RUNNING", "QUEUED", "PENDING", "STARTING")):
+            status = kernel_status(getattr(api.kernels_status(ref), "status", None))
+            if status in ACTIVE_STATES:
                 raise ValueError("OTHER_KAGGLE_ACCOUNT_JOB_ACTIVE")
-            if not any(x in status for x in ("COMPLETE", "SUCCESS", "ERROR", "FAIL", "CANCEL")):
+            if status not in TERMINAL_STATES:
                 raise ValueError("OTHER_KAGGLE_ACCOUNT_JOB_UNKNOWN")
         token = getattr(page, "next_page_token", None)
         if not token:
@@ -96,11 +114,11 @@ def account_census(api):
             ref = getattr(item, "ref", None)
             if not isinstance(ref, str) or "/" not in ref:
                 raise ValueError("ACCOUNT_KERNEL_REF_UNKNOWN")
-            status = str(getattr(api.kernels_status(ref), "status", "UNKNOWN")).upper()
+            status = kernel_status(getattr(api.kernels_status(ref), "status", None))
             checked += 1
-            if any(x in status for x in ("RUNNING", "QUEUED", "PENDING", "STARTING")):
+            if status in ACTIVE_STATES:
                 active += 1
-            elif not any(x in status for x in ("COMPLETE", "SUCCESS", "ERROR", "FAIL", "CANCEL")):
+            elif status not in TERMINAL_STATES:
                 raise ValueError("ACCOUNT_KERNEL_STATUS_UNKNOWN")
         token = getattr(page, "next_page_token", None)
         if not token:
@@ -178,13 +196,13 @@ def observe(api, m, native_version):
     # Exact-version native acceptance must be corroborated by a project verifier.
     require_native_version(api, username, f"semper-{m['experiment_id']}", native_version)
     target = f"{ref}/{native_version}"
-    status = str(getattr(api.kernels_status(target), "status", "UNKNOWN")).upper()
+    status = kernel_status(getattr(api.kernels_status(target), "status", None))
     require_native_version(api, username, f"semper-{m['experiment_id']}", native_version)
-    if any(s in status for s in ("RUNNING", "QUEUED", "PENDING", "STARTING")):
+    if status in ACTIVE_STATES:
         return {"state": "NONTERMINAL", "native_ref": ref, "native_version": native_version}
-    if any(s in status for s in ("ERROR", "FAIL", "CANCEL")):
+    if status in ("ERROR", "FAIL", "FAILED", "CANCEL", "CANCELED", "CANCELLED"):
         return {"state": "TERMINAL_FAILED", "native_ref": ref, "native_version": native_version}
-    if any(s in status for s in ("COMPLETE", "SUCCESS")):
+    if status in ("COMPLETE", "COMPLETED", "SUCCESS"):
         return {"state": "PROVIDER_TERMINAL_SCIENCE_UNVERIFIED",
                 "native_ref": ref, "native_version": native_version}
     raise ValueError("PROVIDER_STATE_UNKNOWN")
