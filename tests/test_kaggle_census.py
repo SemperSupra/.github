@@ -3,7 +3,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 import unittest
 
-from scripts.cloud.kaggle_provider import account_census
+from scripts.cloud.kaggle_provider import account_census, kernel_status, no_duplicate_or_active
 
 def quota(gpu_allowed=3600, gpu_used=600,
           tpu_allowed=2400, tpu_used=120):
