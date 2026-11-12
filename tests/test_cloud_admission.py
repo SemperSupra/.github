@@ -9,6 +9,7 @@ import unittest
 
 from scripts.cloud.admission_contract import (
     REQUEST, LEDGER, CENSUS, SCHEMA, digest, propose, validate_request,
+    prepare_fenced_claim,
 )
 
 NOW = "2026-11-12T12:00:00Z"
@@ -195,6 +196,41 @@ class AdmissionContractTests(unittest.TestCase):
         r=req(provider="colab");r["max_ccu"]=200
         with self.assertRaisesRegex(ValueError,"BUDGET_INVALID"):
             validate_request(r)
+
+    def test_fenced_lease_candidate_requires_cas_and_is_not_persisted(self):
+        r=req(); l=ledger(); p=propose([r],approvals(r),l,census(),NOW)
+        new=prepare_fenced_claim(l,p,NOW)
+        self.assertEqual(new["lease"]["native_state"],"RESERVED")
+        self.assertEqual(new["lease"]["fence"],4)
+        self.assertEqual(new["lease"]["request_sha256"],digest(r))
+        self.assertEqual(l["generation"],3)
+        self.assertIsNone(l["lease"])
+        self.assertEqual(new["lease"]["expires_utc"],"2026-11-12T12:05:00Z")
+
+    def test_second_caller_cannot_reuse_stale_lease_proposal(self):
+        r=req(); original=ledger()
+        proposal=propose([r],approvals(r),original,census(),NOW)
+        first=prepare_fenced_claim(original,proposal,NOW)
+        with self.assertRaisesRegex(ValueError,"LEASE_ALREADY_PRESENT"):
+            prepare_fenced_claim(first,proposal,NOW)
+        changed=ledger();changed["generation"]=10
+        with self.assertRaisesRegex(ValueError,"LEDGER_STALE"):
+            prepare_fenced_claim(changed,proposal,NOW)
+
+    def test_forged_claim_token_and_generation_refused(self):
+        r=req(); l=ledger(); p=propose([r],approvals(r),l,census(),NOW)
+        forged=copy.deepcopy(p);forged["claim_token_sha256"]="0"*64
+        with self.assertRaisesRegex(ValueError,"TOKEN_INVALID"):
+            prepare_fenced_claim(l,forged,NOW)
+        forged=copy.deepcopy(p);forged["proposed_fence"]=5
+        with self.assertRaisesRegex(ValueError,"FENCE_INVALID"):
+            prepare_fenced_claim(l,forged,NOW)
+
+    def test_native_busy_proposal_cannot_be_rendered_as_lease(self):
+        r=req();c=census();c["native_active_count"]=1;l=ledger()
+        p=propose([r],approvals(r),l,c,NOW)
+        with self.assertRaisesRegex(ValueError,"NOT_ADMISSIBLE"):
+            prepare_fenced_claim(l,p,NOW)
 
     def test_future_request_does_not_enter_queue(self):
         r=req();r["submitted_utc"]="2026-11-12T18:00:00Z"
