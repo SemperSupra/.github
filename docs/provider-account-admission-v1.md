@@ -138,7 +138,7 @@ Reference authorities:
 
 ## Qualification ladder
 
-1. **Done when CI passes:** offline 18-case state-machine/negative
+1. **Done when CI passes:** offline 24-case state-machine/negative
    acceptance tests, reproducibility of decisions, no provider network.
 2. **Not yet done:** owner-reviewed durable conditional-write CAS lease
    integration plus two-start race/interruption test on a single GitHub
@@ -152,3 +152,7 @@ Reference authorities:
 
 No queue admission, cross-account lock, provider dispatch, or autonomous
 overnight service is activated by merging this interface alone.
+
+## Provider census adapter evidence
+
+The shared Kaggle `workflow_call` now accepts a protected `census` operation without a job manifest: one read-only account quota query plus native job status enumeration; output carries separate `gpu-t4x2` and `tpu-v5e8` remaining seconds, active-job count and timestamp. It does not reserve resources. Colab `usage` remains restricted to a trusted user-ADC context and emits CCU balance, observed CCU/hour and active assignments. A future controller maps both to the admission schema with the explicit provider-account alias; consumers must not infer identity or quota values. Any uncertain or stale census blocks admission.
