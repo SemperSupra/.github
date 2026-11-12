@@ -90,13 +90,13 @@ class KaggleAccountCensusTests(unittest.TestCase):
                       "UNKNOWN_CANCEL", "STILL_RUNNING_UNKNOWN"):
             with self.subTest(value=value):
                 api = Fake({"example/foreign":value})
-                with self.assertRaisesRegex(ValueError, "KERNEL_STATUS_UNKNOWN"):
+                with self.assertRaisesRegex(ValueError, "ACCOUNT_KERNEL_STATUS_UNKNOWN"):
                     account_census(api)
                 self.assertNotIn("kernels_push", api.calls)
 
     def test_no_duplicate_or_active_rejects_false_terminal(self):
         api = Fake({"example/foreign":"NOT_COMPLETE"})
-        with self.assertRaisesRegex(ValueError, "KERNEL_STATUS_UNKNOWN"):
+        with self.assertRaisesRegex(ValueError, "OTHER_KAGGLE_ACCOUNT_JOB_UNKNOWN"):
             no_duplicate_or_active(api, "example/new-study")
 
     def test_native_known_enum_values_are_exact(self):
