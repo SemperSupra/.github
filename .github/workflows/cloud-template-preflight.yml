@@ -6,6 +6,7 @@ on:
       - ".github/workflows/cloud-template-preflight.yml"
       - "scripts/cloud/**"
       - "tests/test_cloud_templates.py"
+      - "tests/test_kaggle_provider_sdk.py"
       - "experiments/**"
       - "cloud/manifests/**"
       - "docs/cloud-workflows-v1.md"
@@ -26,6 +27,11 @@ jobs:
         run: |
           python3 -m py_compile scripts/cloud/*.py tests/test_cloud_templates.py
           python3 -m unittest discover -s tests -p "test_cloud_templates.py" -v
+      - name: Qualify pinned Kaggle SDK API without credentials
+        run: |
+          python3 -m venv /tmp/kaggle-sdk-contract
+          /tmp/kaggle-sdk-contract/bin/python -m pip install --disable-pip-version-check kaggle==2.2.4 six==1.17.0
+          /tmp/kaggle-sdk-contract/bin/python -m unittest discover -s tests -p 'test_kaggle_provider_sdk.py' -v
       - name: Check both sample source-locked manifests offline
         run: |
           python3 scripts/cloud/cloud_contract.py --provider kaggle \
