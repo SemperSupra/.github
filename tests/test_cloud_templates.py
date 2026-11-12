@@ -311,5 +311,85 @@ class ColabExecutionGuardTests(unittest.TestCase):
                 provider.execute(m,root,root)
         self.assertEqual(calls,["new","exec","download","stop"])
 
+
+class KaggleSharedAccountGuardsTests(unittest.TestCase):
+    def test_other_namespace_running_job_blocks(self):
+        from types import SimpleNamespace
+        from scripts.cloud.kaggle_provider import no_duplicate_or_active
+        for other in ("user/latent-c001-tpu-bridge-v1",
+                      "user/ad-rdte-gpu-t4x2", "user/other-job"):
+            with self.subTest(other=other):
+                class Fake:
+                    def kernels_list_with_response(self,**kwargs):
+                        return SimpleNamespace(kernels=[SimpleNamespace(ref=other)],
+                                               next_page_token=None)
+                    def kernels_status(self,ref):
+                        return SimpleNamespace(status="RUNNING")
+                with self.assertRaisesRegex(ValueError,"ACCOUNT_JOB_ACTIVE"):
+                    no_duplicate_or_active(Fake(),"user/semper-new")
+
+    def test_other_namespace_unknown_fails_closed(self):
+        from types import SimpleNamespace
+        from scripts.cloud.kaggle_provider import no_duplicate_or_active
+        class Fake:
+            def kernels_list_with_response(self,**kwargs):
+                return SimpleNamespace(kernels=[
+                    SimpleNamespace(ref="user/some-foreign-job")],next_page_token=None)
+            def kernels_status(self,ref):
+                return SimpleNamespace(status="MYSTERIOUS")
+        with self.assertRaisesRegex(ValueError,"ACCOUNT_JOB_UNKNOWN"):
+            no_duplicate_or_active(Fake(),"user/semper-new")
+
+    def test_finished_foreign_job_not_blocked(self):
+        from types import SimpleNamespace
+        from scripts.cloud.kaggle_provider import no_duplicate_or_active
+        class Fake:
+            def kernels_list_with_response(self,**kwargs):
+                return SimpleNamespace(kernels=[
+                    SimpleNamespace(ref="user/old-project")],next_page_token=None)
+            def kernels_status(self,ref):
+                return SimpleNamespace(status="COMPLETE")
+        self.assertIsNone(no_duplicate_or_active(Fake(),"user/semper-new"))
+
+    def test_target_duplicate_blocked_even_when_terminal(self):
+        from types import SimpleNamespace
+        from scripts.cloud.kaggle_provider import no_duplicate_or_active
+        class Fake:
+            def kernels_list_with_response(self,**kwargs):
+                return SimpleNamespace(kernels=[
+                    SimpleNamespace(ref="user/semper-new")],next_page_token=None)
+        with self.assertRaisesRegex(ValueError,"TARGET_ALREADY_EXISTS"):
+            no_duplicate_or_active(Fake(),"user/semper-new")
+
+    def test_staged_source_sha_mismatch_blocks_before_push(self):
+        from types import SimpleNamespace
+        from scripts.cloud.kaggle_provider import submit
+        from datetime import timedelta
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            (root/"experiments").mkdir()
+            (root/"experiments"/"job.py").write_text("print('safe')\n")
+            m={"accelerator":"NvidiaTeslaT4",
+               "budget":{"min_remaining_seconds":600},
+               "source":"experiments/job.py",
+               "source_sha256":"0"*64,
+               "experiment_id":"staged-source-guard", "max_runtime_seconds":300}
+            class Fake:
+                CONFIG_NAME_USER="username"
+                push_called=False
+                def authenticate(self): pass
+                def get_config_value(self,name): return "user"
+                def quota_view(self): return SimpleNamespace(
+                    gpu_quota=SimpleNamespace(total_time_allowed=timedelta(seconds=3600),
+                                              time_used=timedelta(seconds=0)))
+                def kernels_list_with_response(self,**kwargs):
+                    return SimpleNamespace(kernels=[],next_page_token=None)
+                def kernels_push(self,*a,**k):
+                    self.push_called=True
+            api=Fake()
+            with self.assertRaisesRegex(ValueError,"SOURCE_HASH_CHANGED"):
+                submit(api,m,root)
+            self.assertFalse(api.push_called)
+
 if __name__ == "__main__":
     unittest.main()
