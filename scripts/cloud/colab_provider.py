@@ -12,8 +12,12 @@ import json
 from pathlib import Path
 import subprocess
 
-from cloud_contract import load
-from colab_usage import collect, read_snapshot
+try:
+    from .cloud_contract import load
+    from .colab_usage import collect, read_snapshot
+except ImportError:  # direct CLI invocation
+    from cloud_contract import load
+    from colab_usage import collect, read_snapshot
 
 def cli(argv, timeout):
     try:
