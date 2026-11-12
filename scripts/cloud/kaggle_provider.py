@@ -26,14 +26,14 @@ TERMINAL_STATES = frozenset((
     "CANCEL", "CANCELED", "CANCELLED",
 ))
 
-def kernel_status(raw):
+def kernel_status(raw, *, error="KERNEL_STATUS_UNKNOWN"):
     state = str(raw).strip().upper()
     if "." in state:
         prefix, state = state.rsplit(".", 1)
         if not prefix.endswith("STATUS"):
-            raise ValueError("KERNEL_STATUS_UNKNOWN")
+            raise ValueError(error)
     if state not in ACTIVE_STATES and state not in TERMINAL_STATES:
-        raise ValueError("KERNEL_STATUS_UNKNOWN")
+        raise ValueError(error)
     return state
 
 def quota_or_deny(api, m):
@@ -67,7 +67,8 @@ def no_duplicate_or_active(api, target):
             # Account-wide exclusion, not just this framework's namespace.
             # Kaggle quota and accelerator allocations are shared across
             # independent projects, including earlier latent/ad-rdte jobs.
-            status = kernel_status(getattr(api.kernels_status(ref), "status", None))
+            status = kernel_status(getattr(api.kernels_status(ref), "status", None),
+                                   error="OTHER_KAGGLE_ACCOUNT_JOB_UNKNOWN")
             if status in ACTIVE_STATES:
                 raise ValueError("OTHER_KAGGLE_ACCOUNT_JOB_ACTIVE")
             if status not in TERMINAL_STATES:
@@ -114,7 +115,8 @@ def account_census(api):
             ref = getattr(item, "ref", None)
             if not isinstance(ref, str) or "/" not in ref:
                 raise ValueError("ACCOUNT_KERNEL_REF_UNKNOWN")
-            status = kernel_status(getattr(api.kernels_status(ref), "status", None))
+            status = kernel_status(getattr(api.kernels_status(ref), "status", None),
+                                   error="ACCOUNT_KERNEL_STATUS_UNKNOWN")
             checked += 1
             if status in ACTIVE_STATES:
                 active += 1
@@ -196,7 +198,8 @@ def observe(api, m, native_version):
     # Exact-version native acceptance must be corroborated by a project verifier.
     require_native_version(api, username, f"semper-{m['experiment_id']}", native_version)
     target = f"{ref}/{native_version}"
-    status = kernel_status(getattr(api.kernels_status(target), "status", None))
+    status = kernel_status(getattr(api.kernels_status(target), "status", None),
+                           error="PROVIDER_STATE_UNKNOWN")
     require_native_version(api, username, f"semper-{m['experiment_id']}", native_version)
     if status in ACTIVE_STATES:
         return {"state": "NONTERMINAL", "native_ref": ref, "native_version": native_version}
