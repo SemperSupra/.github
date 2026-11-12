@@ -100,7 +100,8 @@ jobs:
       manifest_path: cloud/manifests/gpu-smoke.json
       operation: ${{ inputs.action }}
       native_version: ${{ inputs.version }}
-    secrets: inherit
+    # Credentialed job reads the named secret from the caller repository's
+    # protected kaggle-research environment; no blanket secret inheritance.
 ```
 
 **Environment secrets are held in each consuming repository.**
