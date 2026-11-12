@@ -50,7 +50,7 @@ def execute(m, workspace, output):
         # the experiment. Idle preflight cannot price a future accelerator.
         allocated = read_snapshot()
         observed_rate = allocated["rate_ccu_per_hour"]
-        if allocated["active_assignments"] < 1:
+        if allocated["active_assignments"] != 1:
             raise ValueError("COLAB_ALLOCATION_NOT_ATTESTED")
         if accelerator != "cpu" and observed_rate <= 0:
             raise ValueError("COLAB_ACCELERATOR_RATE_NOT_ATTESTED")
@@ -88,6 +88,10 @@ def execute(m, workspace, output):
         after, delta = None, None
     if failure or not verified_cleanup or delta is None:
         raise ValueError("EXECUTION_OR_CLEANUP_OR_METER_UNKNOWN")
+    # A successful stop command alone does not prove that the VM is gone.
+    # Only accept after an independent account-level zero-assignment readback.
+    if post.get("active_assignments") != 0:
+        raise ValueError("COLAB_RUNTIME_STILL_ACTIVE_OR_UNVERIFIED")
     if delta < -0.00001:
         raise ValueError("CCU_ACCOUNTING_UNKNOWN")
     return {
