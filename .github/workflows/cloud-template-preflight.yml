@@ -6,6 +6,7 @@ on:
       - ".github/workflows/cloud-template-preflight.yml"
       - "scripts/cloud/**"
       - "tests/test_cloud_templates.py"
+      - "tests/test_cloud_admission.py"
       - "tests/test_kaggle_provider_sdk.py"
       - "experiments/**"
       - "cloud/manifests/**"
@@ -27,6 +28,8 @@ jobs:
         run: |
           python3 -m py_compile scripts/cloud/*.py tests/test_cloud_templates.py
           python3 -m unittest discover -s tests -p "test_cloud_templates.py" -v
+      - name: Prove fenced provider admission planning with synthetic snapshots
+        run: python3 -m unittest discover -s tests -p "test_cloud_admission.py" -v
       - name: Qualify pinned Kaggle SDK API without credentials
         run: |
           python3 -m venv /tmp/kaggle-sdk-contract
