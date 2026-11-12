@@ -45,6 +45,7 @@ def evaluate(snapshot: dict, budget: dict) -> dict:
     # maximum CCU budget and terminate if the observed rate exceeds it.
     ready = (assignments == 0 and balance >= max_ccu + reserve)
     return {
+        "entitlement_scope": "PAID_CCU_BALANCE_ONLY_NOT_FREE_GPU_QUOTA",
         "admission": "BUDGET_PRECHECK_PASS_NOT_RESOURCE_RESERVED" if ready else "BLOCKED",
         "reason": ("NO_ACTIVE_ASSIGNMENTS_AND_RESERVE_OK" if ready
                    else "ACTIVE_ASSIGNMENT_OR_INSUFFICIENT_BALANCE"),
@@ -54,7 +55,8 @@ def evaluate(snapshot: dict, budget: dict) -> dict:
         "prediction_boundary": "No prospective accelerator rate, exact plan renewal, entitlement eligibility, or availability inferred.",
     }
 
-def collect(budget: dict) -> dict:
+def read_snapshot() -> dict:
+    """Read native account CCU status; does not reserve or price an accelerator."""
     try:
         p = subprocess.run(
             ["colab", "--auth=adc", "usage"], capture_output=True, text=True,
@@ -63,7 +65,10 @@ def collect(budget: dict) -> dict:
         raise ValueError("COLAB_CLI_UNAVAILABLE")
     if p.returncode:
         raise ValueError("COLAB_USAGE_REQUEST_FAILED")
-    return evaluate(parse_usage(p.stdout), budget)
+    return parse_usage(p.stdout)
+
+def collect(budget: dict) -> dict:
+    return evaluate(read_snapshot(), budget)
 
 def main():
     p = argparse.ArgumentParser()
