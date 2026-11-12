@@ -311,6 +311,42 @@ class ColabExecutionGuardTests(unittest.TestCase):
                 provider.execute(m,root,root)
         self.assertEqual(calls,["new","exec","download","stop"])
 
+    def test_colab_stop_success_but_active_assignment_denied(self):
+        from unittest.mock import patch
+        from scripts.cloud import colab_provider as provider
+        root,m=self.fixture()
+        snapshots=iter([
+            {"admission":"BUDGET_PRECHECK_PASS_NOT_RESOURCE_RESERVED",
+             "balance_ccu":100.0,"active_assignments":0},
+            {"admission":"BLOCKED","balance_ccu":99.5,"active_assignments":1},
+        ])
+        def fake_cli(args,timeout):
+            if args[0]=="download":
+                Path(args[-1]).write_text('{"status":"SYNTHETIC"}')
+        with patch.object(provider,"collect",side_effect=lambda budget:next(snapshots)),\
+             patch.object(provider,"read_snapshot",
+                 return_value={"active_assignments":1,"rate_ccu_per_hour":2.0}),\
+             patch.object(provider,"cli",side_effect=fake_cli):
+            with self.assertRaisesRegex(ValueError,"STILL_ACTIVE"):
+                provider.execute(m,root,root)
+
+    def test_racing_second_session_aborts_and_attempts_cleanup(self):
+        from unittest.mock import patch
+        from scripts.cloud import colab_provider as provider
+        root,m=self.fixture()
+        observed=[]
+        def fake_cli(args,timeout):
+            observed.append(args[0])
+        with patch.object(provider,"collect",return_value={
+                "admission":"BUDGET_PRECHECK_PASS_NOT_RESOURCE_RESERVED",
+                "balance_ccu":100.0}),\
+             patch.object(provider,"read_snapshot",
+                return_value={"active_assignments":2,"rate_ccu_per_hour":5.0}),\
+             patch.object(provider,"cli",side_effect=fake_cli):
+            with self.assertRaisesRegex(ValueError,"EXECUTION_OR_CLEANUP"):
+                provider.execute(m,root,root)
+        self.assertEqual(observed,["new","stop"])
+
 
 class KaggleSharedAccountGuardsTests(unittest.TestCase):
     def test_other_namespace_running_job_blocks(self):
@@ -391,41 +427,6 @@ class KaggleSharedAccountGuardsTests(unittest.TestCase):
                 submit(api,m,root)
             self.assertFalse(api.push_called)
 
-    def test_colab_stop_success_but_active_assignment_denied(self):
-        from unittest.mock import patch
-        from scripts.cloud import colab_provider as provider
-        root,m=self.fixture()
-        snapshots=iter([
-            {"admission":"BUDGET_PRECHECK_PASS_NOT_RESOURCE_RESERVED",
-             "balance_ccu":100.0,"active_assignments":0},
-            {"admission":"BLOCKED","balance_ccu":99.5,"active_assignments":1},
-        ])
-        def fake_cli(args,timeout):
-            if args[0]=="download":
-                Path(args[-1]).write_text('{"status":"SYNTHETIC"}')
-        with patch.object(provider,"collect",side_effect=lambda budget:next(snapshots)),\
-             patch.object(provider,"read_snapshot",
-                 return_value={"active_assignments":1,"rate_ccu_per_hour":2.0}),\
-             patch.object(provider,"cli",side_effect=fake_cli):
-            with self.assertRaisesRegex(ValueError,"STILL_ACTIVE"):
-                provider.execute(m,root,root)
-
-    def test_racing_second_session_aborts_and_attempts_cleanup(self):
-        from unittest.mock import patch
-        from scripts.cloud import colab_provider as provider
-        root,m=self.fixture()
-        observed=[]
-        def fake_cli(args,timeout):
-            observed.append(args[0])
-        with patch.object(provider,"collect",return_value={
-                "admission":"BUDGET_PRECHECK_PASS_NOT_RESOURCE_RESERVED",
-                "balance_ccu":100.0}),\
-             patch.object(provider,"read_snapshot",
-                return_value={"active_assignments":2,"rate_ccu_per_hour":5.0}),\
-             patch.object(provider,"cli",side_effect=fake_cli):
-            with self.assertRaisesRegex(ValueError,"EXECUTION_OR_CLEANUP"):
-                provider.execute(m,root,root)
-        self.assertEqual(observed,["new","stop"])
 
 if __name__ == "__main__":
     unittest.main()
