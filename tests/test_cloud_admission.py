@@ -5,11 +5,13 @@ authority. Tests never create leases, allocate resources or mutate a DLE.
 """
 from datetime import datetime, timedelta, timezone
 import copy
+import tempfile
+from pathlib import Path
 import unittest
 
 from scripts.cloud.admission_contract import (
     REQUEST, LEDGER, CENSUS, SCHEMA, digest, propose, validate_request,
-    prepare_fenced_claim,
+    prepare_fenced_claim, read_strict_json,
 )
 
 NOW = "2026-11-12T12:00:00Z"
@@ -256,6 +258,33 @@ class AdmissionContractTests(unittest.TestCase):
         r=req();r["submitted_utc"]="2026-11-12T18:00:00Z"
         self.assertEqual(propose([r],approvals(r),ledger(),census(),NOW)["state"],
                          "NO_ELIGIBLE_APPROVED_REQUEST")
+
+    def test_strict_git_json_reader_rejects_ambiguous_and_nonfinite(self):
+        # No provider, Git, credential or actual ledger write is used.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "input.json"
+            for raw, reason in (
+                (b'{"schema":"v1","schema":"override"}', "JSON_DUPLICATE_KEY"),
+                (b'{"scope":{"enabled":false,"enabled":true}}', "JSON_DUPLICATE_KEY"),
+                (b'{"quota":NaN}', "JSON_NONFINITE_NUMBER"),
+                (b'{"quota":Infinity}', "JSON_NONFINITE_NUMBER"),
+                (b'{"one":1} {"two":2}', "Extra data"),
+                (b'{"field":', "Expecting value"),
+            ):
+                with self.subTest(raw=raw):
+                    path.write_bytes(raw)
+                    with self.assertRaisesRegex(ValueError, reason):
+                        read_strict_json(path)
+            path.write_bytes(b'{"scope":{"enabled":false},"quota":0}')
+            self.assertEqual(read_strict_json(path),
+                             {"scope":{"enabled":False},"quota":0})
+
+    def test_strict_git_json_reader_bounds_untrusted_input(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "too-large.json"
+            path.write_bytes(b" " * (1024 * 1024 + 1))
+            with self.assertRaisesRegex(ValueError, "INPUT_TOO_LARGE"):
+                read_strict_json(path)
 
 if __name__=="__main__":
     unittest.main()
