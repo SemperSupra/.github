@@ -118,6 +118,12 @@ class CloudTemplatesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"COLAB_USAGE_SCHEMA_CHANGED"):
             parse_usage("Current balance: 5 compute units\nUsage rate: 0/hr\nActive assignments: 0\nActive assignments: 1")
 
+    def test_consumer_examples_do_not_inherit_all_secrets(self):
+        root=Path(__file__).resolve().parents[1]
+        documentation=(root/"docs/cloud-workflows-v1.md").read_text()
+        self.assertNotIn("    secrets: inherit",documentation)
+        self.assertIn("protected kaggle-research environment",documentation)
+
     def test_template_boundaries(self):
         root=Path(__file__).resolve().parents[1]
         kg=(root/".github/workflows/reusable-kaggle-v1.yml").read_text()
