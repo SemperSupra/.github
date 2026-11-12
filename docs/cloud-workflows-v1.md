@@ -9,7 +9,7 @@ environment secret; Colab uses only an existing, dedicated trusted ADC host.
 
 ## Interfaces
 
-- `.github/workflows/reusable-kaggle-v1.yml` supports `plan`, `submit`,
+- `.github/workflows/reusable-kaggle-v1.yml` supports `plan`, `census`, `submit`,
   `observe` (requires exact provider-native version). `submit`/`observe` only
   on the caller's protected `main` with `kaggle-research` environment.
 - `.github/workflows/reusable-colab-v1.yml` supports `plan` on free public GHA
@@ -86,7 +86,7 @@ on:
     inputs:
       action:
         type: choice
-        options: [plan, submit, observe]
+        options: [plan, census, submit, observe]
         default: plan
       version:
         type: number
@@ -182,3 +182,6 @@ Official sources:
 - https://github.com/Kaggle/kaggle-cli/blob/main/docs/kernels.md
 - https://github.com/googlecolab/google-colab-cli/blob/main/README.md
 - https://github.com/googlecolab/google-colab-cli/blob/main/docs/04_automation_and_utility.md
+### Shared Kaggle account-only observation
+
+The protected main-branch operation `census` requires the consumer's `kaggle-research` environment secret but **does not require an experiment manifest**. It performs quota and status **reads only** and returns a sanitized account summary with distinct GPU and TPU remaining-seconds pools, all active/queued native kernel count and observed timestamp. Unknown status, missing quota or incomplete pagination rejects the observation. This is not an account reservation, authorization to submit, nor an always-on scheduler. Its first live provider call remains unqualified.
