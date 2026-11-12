@@ -6,12 +6,16 @@ It never runs on PRs. Kaggle native job version and source digest are retained.
 Unknown quota, active jobs or provider semantics => deny, never retry blindly.
 """
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import shutil
 import tempfile
 
-from cloud_contract import load
+try:
+    from .cloud_contract import load
+except ImportError:  # standalone GitHub Actions entrypoint
+    from cloud_contract import load
 
 def quota_or_deny(api, m):
     if m["accelerator"] == "cpu":
@@ -37,17 +41,18 @@ def no_duplicate_or_active(api, target):
             raise ValueError("KERNEL_LIST_UNKNOWN")
         for item in page.kernels or []:
             ref = getattr(item, "ref", None)
-            if not isinstance(ref, str):
+            if not isinstance(ref, str) or "/" not in ref:
                 raise ValueError("KERNEL_REF_UNKNOWN")
             if ref.lower() == target.lower():
                 raise ValueError("TARGET_ALREADY_EXISTS_NO_REPUSH")
-            # No concurrent jobs of this shared framework on same account.
-            if "/semper-" in ref.lower():
-                status = str(getattr(api.kernels_status(ref), "status", "UNKNOWN")).upper()
-                if any(x in status for x in ("RUNNING", "QUEUED", "PENDING", "STARTING")):
-                    raise ValueError("OTHER_SHARED_JOB_ACTIVE")
-                if not any(x in status for x in ("COMPLETE", "SUCCESS", "ERROR", "FAIL", "CANCEL")):
-                    raise ValueError("OTHER_SHARED_JOB_UNKNOWN")
+            # Account-wide exclusion, not just this framework's namespace.
+            # Kaggle quota and accelerator allocations are shared across
+            # independent projects, including earlier latent/ad-rdte jobs.
+            status = str(getattr(api.kernels_status(ref), "status", "UNKNOWN")).upper()
+            if any(x in status for x in ("RUNNING", "QUEUED", "PENDING", "STARTING")):
+                raise ValueError("OTHER_KAGGLE_ACCOUNT_JOB_ACTIVE")
+            if not any(x in status for x in ("COMPLETE", "SUCCESS", "ERROR", "FAIL", "CANCEL")):
+                raise ValueError("OTHER_KAGGLE_ACCOUNT_JOB_UNKNOWN")
         token = getattr(page, "next_page_token", None)
         if not token:
             return
@@ -68,6 +73,9 @@ def submit(api, m, workspace):
         path = Path(tmp)
         source = workspace / m["source"]
         shutil.copyfile(source, path / "job.py")
+        copied = (path / "job.py").read_bytes()
+        if hashlib.sha256(copied).hexdigest() != m["source_sha256"]:
+            raise ValueError("SOURCE_HASH_CHANGED_BEFORE_PROVIDER_SUBMIT")
         config = {
             "id": target, "title": m["experiment_id"],
             "code_file": "job.py", "language": "python", "kernel_type": "script",
