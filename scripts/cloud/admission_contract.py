@@ -8,7 +8,7 @@ This module never grants itself a lease or submits a job.
 """
 from __future__ import annotations
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import hashlib
 import json
 import re
@@ -217,6 +217,52 @@ def propose(requests: list[dict], approvals: list[str], ledger: dict,
     return {"schema":SCHEMA,"state":"NO_ELIGIBLE_APPROVED_REQUEST",
             "provider":ledger["provider"],"account_alias":ledger["account_alias"],
             "next_action":"NO_SUBMIT"}
+
+def prepare_fenced_claim(ledger: dict, decision: dict, now_utc: str) -> dict:
+    """Render a CAS-ready ledger *candidate*, never save it.
+
+    The caller MUST condition its durable GitHub write on the exact ledger
+    object identity/revision, and reobserve the provider after winning CAS.
+    Two concurrent callers may render the same object; only one may write.
+    """
+    validate_ledger(ledger)
+    now=utc(now_utc)
+    fail(isinstance(decision,dict)
+         and decision.get("schema")==SCHEMA
+         and decision.get("state")=="ADMISSIBLE_NOT_CLAIMED",
+         "PROPOSAL_NOT_ADMISSIBLE")
+    fail(ledger["lease"] is None, "LEASE_ALREADY_PRESENT")
+    fail(decision.get("provider")==ledger["provider"]
+         and decision.get("account_alias")==ledger["account_alias"],
+         "PROPOSAL_SCOPE_MISMATCH")
+    fail(decision.get("expected_ledger_sha256")==digest(ledger),
+         "PROPOSAL_LEDGER_STALE")
+    fail(type(decision.get("proposed_fence")) is int
+         and decision["proposed_fence"]==ledger["generation"]+1,
+         "PROPOSAL_FENCE_INVALID")
+    req_id=decision.get("request_id")
+    req_sha=decision.get("request_sha256")
+    fail(isinstance(req_id,str) and IDENTIFIER.fullmatch(req_id) is not None
+         and isinstance(req_sha,str) and SHA.fullmatch(req_sha) is not None,
+         "PROPOSAL_REQUEST_INVALID")
+    token=digest({"request_sha256":req_sha,
+                  "expected_ledger_sha256":digest(ledger),
+                  "fence":decision["proposed_fence"],
+                  "account_alias":ledger["account_alias"]})
+    fail(decision.get("claim_token_sha256")==token,"PROPOSAL_TOKEN_INVALID")
+    new=dict(ledger)
+    new["generation"]=decision["proposed_fence"]
+    new["lease"]={
+        "request_id":req_id,
+        "request_sha256":req_sha,
+        "fence":new["generation"],
+        "native_state":"RESERVED",
+        "native_ref":None,
+        "native_version":None,
+        "expires_utc":(now+timedelta(minutes=5)).isoformat().replace("+00:00","Z")
+    }
+    validate_ledger(new)
+    return new
 
 def main() -> int:
     p=argparse.ArgumentParser()
