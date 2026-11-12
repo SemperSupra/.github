@@ -3,9 +3,9 @@ on:
   workflow_call:
     inputs:
       manifest_path:
-        description: Path to a reviewed source-hashed JSON manifest in caller repository
+        description: Source-hashed manifest for plan/submit/observe; unused for read-only census
         type: string
-        required: true
+        required: false
       operation:
         description: Typed operation; PR admission always plan-only
         type: string
@@ -40,11 +40,13 @@ jobs:
           OPERATION: ${{ inputs.operation }}
           IS_PR: ${{ github.event_name == 'pull_request' }}
         run: |
-          case "$OPERATION" in plan|submit|observe) ;; *) exit 2 ;; esac
+          case "$OPERATION" in plan|submit|observe|census) ;; *) exit 2 ;; esac
+          if [[ "$OPERATION" != "census" && -z "${{ inputs.manifest_path }}" ]]; then exit 2; fi
           if [[ "$IS_PR" == "true" && "$OPERATION" != "plan" ]]; then
             echo "PR_ALLOWED_OPERATION=PLAN_ONLY"; exit 2
           fi
       - name: Offline source-lock and quota-policy preflight
+        if: inputs.operation != 'census'
         env:
           MANIFEST: ${{ inputs.manifest_path }}
         run: |
@@ -53,6 +55,7 @@ jobs:
             --manifest "caller/$MANIFEST" --workspace caller \
             --output "$RUNNER_TEMP/cloud-plan.json"
       - name: Save non-secret source digest and plan
+        if: inputs.operation != 'census'
         uses: actions/upload-artifact@v4
         with:
           name: kaggle-plan-${{ github.run_id }}
@@ -80,6 +83,7 @@ jobs:
           path: .shared-cloud
           persist-credentials: false
       - name: Revalidate source lock before accessing secret
+        if: inputs.operation != 'census'
         env:
           MANIFEST: ${{ inputs.manifest_path }}
         run: |
@@ -99,10 +103,15 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "$KAGGLE_API_TOKEN" ]]; then echo "KAGGLE_KEY_MISSING"; exit 2; fi
-          .venv-kaggle/bin/python .shared-cloud/scripts/cloud/kaggle_provider.py \
-            --workspace caller --manifest "caller/$MANIFEST" \
-            --action "$ACTION" --native-version "$VERSION" \
-            --output "$RUNNER_TEMP/kaggle-provider-receipt.json"
+          if [[ "$ACTION" == "census" ]]; then
+            .venv-kaggle/bin/python .shared-cloud/scripts/cloud/kaggle_provider.py \
+              --action census --output "$RUNNER_TEMP/kaggle-provider-receipt.json"
+          else
+            .venv-kaggle/bin/python .shared-cloud/scripts/cloud/kaggle_provider.py \
+              --workspace caller --manifest "caller/$MANIFEST" \
+              --action "$ACTION" --native-version "$VERSION" \
+              --output "$RUNNER_TEMP/kaggle-provider-receipt.json"
+          fi
       - name: Preserve allowlisted control receipt
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
