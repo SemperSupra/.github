@@ -271,6 +271,31 @@ def prepare_fenced_claim(ledger: dict, decision: dict, now_utc: str) -> dict:
     validate_ledger(new)
     return new
 
+MAX_INPUT_BYTES = 1024 * 1024  # Untrusted Git-backed JSON, never a raw provider payload.
+
+def read_strict_json(path: Path) -> object:
+    """Reject ambiguous keys/nonfinite values before making an admission plan.
+
+    The independent owner approval must still bind the exact normalized
+    request digest; this parser does not sign, authorize, claim or submit.
+    """
+    with path.open("rb") as source:
+        raw = source.read(MAX_INPUT_BYTES + 1)
+    fail(len(raw) <= MAX_INPUT_BYTES, "INPUT_TOO_LARGE")
+
+    def unique_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            fail(key not in result, "JSON_DUPLICATE_KEY")
+            result[key] = value
+        return result
+
+    def nonfinite(_value):
+        raise ValueError("JSON_NONFINITE_NUMBER")
+
+    return json.loads(raw.decode("utf-8"), object_pairs_hook=unique_keys,
+                      parse_constant=nonfinite)
+
 def main() -> int:
     p=argparse.ArgumentParser()
     p.add_argument("--requests",type=Path,required=True)
@@ -281,7 +306,7 @@ def main() -> int:
     p.add_argument("--output",type=Path,required=True)
     a=p.parse_args()
     try:
-        read=lambda x: json.loads(x.read_bytes())
+        read=read_strict_json
         result=propose(read(a.requests),read(a.approvals),read(a.ledger),
                        read(a.census),a.now_utc)
         status=0
