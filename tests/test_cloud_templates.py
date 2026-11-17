@@ -140,6 +140,16 @@ class CloudTemplatesTests(unittest.TestCase):
         self.assertNotIn("KAGGLE_API_TOKEN:",cb)
 
 
+    def test_kaggle_manifest_input_is_not_direct_shell_source(self):
+        # Workflow-call input must enter the shell as environment data,
+        # not be evaluated as expression-expanded Bash source.
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github/workflows/reusable-kaggle-v1.yml").read_text()
+        self.assertNotIn('-z "${{ inputs.manifest_path }}"', workflow)
+        self.assertIn('MANIFEST: ${{ inputs.manifest_path }}', workflow)
+        self.assertIn('-z "$MANIFEST"', workflow)
+
+
 class DriveArtifactTests(unittest.TestCase):
     def fixture(self):
         from scripts.cloud.artifact_manifest import build
