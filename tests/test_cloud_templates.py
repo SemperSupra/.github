@@ -101,6 +101,15 @@ class CloudTemplatesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "PROVIDER_SCHEMA_MISMATCH"):
             load(path, root, "kaggle")
 
+    def test_malformed_accelerator_types_fail_closed(self):
+        root, path, m = self.fixture("kaggle")
+        for value in ([], ["cpu"], {}, {"cpu": True}, None, 7, True):
+            with self.subTest(value=value):
+                candidate = dict(m, accelerator=value)
+                path.write_text(json.dumps(candidate))
+                with self.assertRaisesRegex(ValueError, "ACCELERATOR_NOT_ALLOWLISTED"):
+                    load(path, root, "kaggle")
+
     def test_budget_not_enough(self):
         root,path,m=self.fixture("colab")
         m["budget"]["max_ccu"] = 0.1
