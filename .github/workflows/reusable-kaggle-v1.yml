@@ -39,9 +39,10 @@ jobs:
         env:
           OPERATION: ${{ inputs.operation }}
           IS_PR: ${{ github.event_name == 'pull_request' }}
+          MANIFEST: ${{ inputs.manifest_path }}
         run: |
           case "$OPERATION" in plan|submit|observe|census) ;; *) exit 2 ;; esac
-          if [[ "$OPERATION" != "census" && -z "${{ inputs.manifest_path }}" ]]; then exit 2; fi
+          if [[ "$OPERATION" != "census" && -z "$MANIFEST" ]]; then exit 2; fi
           if [[ "$IS_PR" == "true" && "$OPERATION" != "plan" ]]; then
             echo "PR_ALLOWED_OPERATION=PLAN_ONLY"; exit 2
           fi
