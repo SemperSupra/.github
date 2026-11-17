@@ -47,7 +47,7 @@ jobs:
             --provider colab --manifest "caller/$MANIFEST" --workspace caller \
             --output "$RUNNER_TEMP/cloud-plan.json"
       - name: Store non-secret plan
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: colab-plan-${{ github.run_id }}
           path: ${{ runner.temp }}/cloud-plan.json
@@ -94,7 +94,7 @@ jobs:
             --action "$ACTION" --output "$RUNNER_TEMP/colab-control-receipt.json"
       - name: Store sanitized Colab receipt (never ADC material)
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: colab-control-${{ github.run_id }}
           path: ${{ runner.temp }}/colab-control-receipt.json
