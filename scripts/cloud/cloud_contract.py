@@ -30,9 +30,13 @@ def digest(value: object) -> str:
 def valid_path(raw: object, *, root: str) -> Path:
     if not isinstance(raw, str) or not raw or "\\" in raw or "\x00" in raw:
         raise ValueError("INVALID_RELATIVE_PATH")
+    # Reject noncanonical raw segments before PurePosixPath normalizes them.
+    # In particular, repeated slashes and explicit "." segments disappear in .parts.
+    parts = raw.split("/")
+    if any(s in ("", ".", "..") for s in parts):
+        raise ValueError("INVALID_RELATIVE_PATH")
     p = PurePosixPath(raw)
-    if (p.is_absolute() or len(p.parts) < 2 or p.parts[0] != root
-            or any(s in ("", ".", "..") for s in p.parts)):
+    if (p.is_absolute() or len(p.parts) < 2 or p.parts[0] != root):
         raise ValueError("INVALID_RELATIVE_PATH")
     return Path(*p.parts)
 
@@ -57,7 +61,7 @@ def load(manifest_path: Path, workspace: Path, provider: str) -> dict:
         raise ValueError("PROVIDER_SCHEMA_MISMATCH")
     if not isinstance(m["experiment_id"], str) or not IDENTIFIER.fullmatch(m["experiment_id"]):
         raise ValueError("EXPERIMENT_ID_INVALID")
-    if m["accelerator"] not in PROVIDERS[provider]:
+    if not isinstance(m["accelerator"], str) or m["accelerator"] not in PROVIDERS[provider]:
         raise ValueError("ACCELERATOR_NOT_ALLOWLISTED")
     if type(m["max_runtime_seconds"]) is not int or not 60 <= m["max_runtime_seconds"] <= 3600:
         raise ValueError("RUNTIME_BOUND_INVALID")

@@ -68,6 +68,28 @@ class CloudTemplatesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "INVALID_RELATIVE_PATH"):
             load(path, root, "kaggle")
 
+    def test_noncanonical_source_path_segments_denied(self):
+        root, path, m = self.fixture()
+        for source in ("experiments//test_job.py",
+                       "experiments/./test_job.py",
+                       "experiments/sub/../test_job.py"):
+            with self.subTest(source=source):
+                candidate = dict(m, source=source)
+                path.write_text(json.dumps(candidate))
+                with self.assertRaisesRegex(ValueError, "INVALID_RELATIVE_PATH"):
+                    load(path, root, "kaggle")
+
+    def test_noncanonical_receipt_path_segments_denied(self):
+        root, path, m = self.fixture()
+        for receipt in ("output//result.json",
+                        "output/./result.json",
+                        "output/sub/../result.json"):
+            with self.subTest(receipt=receipt):
+                candidate = dict(m, receipt_file=receipt)
+                path.write_text(json.dumps(candidate))
+                with self.assertRaisesRegex(ValueError, "INVALID_RELATIVE_PATH"):
+                    load(path, root, "kaggle")
+
     def test_provider_and_accelerator_denied(self):
         root,path,m=self.fixture("colab")
         m["accelerator"] = "TpuV5E8"
@@ -78,6 +100,15 @@ class CloudTemplatesTests(unittest.TestCase):
         path.write_text(json.dumps(m))
         with self.assertRaisesRegex(ValueError, "PROVIDER_SCHEMA_MISMATCH"):
             load(path, root, "kaggle")
+
+    def test_malformed_accelerator_types_fail_closed(self):
+        root, path, m = self.fixture("kaggle")
+        for value in ([], ["cpu"], {}, {"cpu": True}, None, 7, True):
+            with self.subTest(value=value):
+                candidate = dict(m, accelerator=value)
+                path.write_text(json.dumps(candidate))
+                with self.assertRaisesRegex(ValueError, "ACCELERATOR_NOT_ALLOWLISTED"):
+                    load(path, root, "kaggle")
 
     def test_budget_not_enough(self):
         root,path,m=self.fixture("colab")
