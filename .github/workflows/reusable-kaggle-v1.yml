@@ -56,7 +56,7 @@ jobs:
             --output "$RUNNER_TEMP/cloud-plan.json"
       - name: Save non-secret source digest and plan
         if: inputs.operation != 'census'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: kaggle-plan-${{ github.run_id }}
           path: ${{ runner.temp }}/cloud-plan.json
@@ -114,7 +114,7 @@ jobs:
           fi
       - name: Preserve allowlisted control receipt
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: kaggle-provider-${{ github.run_id }}
           path: ${{ runner.temp }}/kaggle-provider-receipt.json
