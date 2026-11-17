@@ -61,7 +61,7 @@ def load(manifest_path: Path, workspace: Path, provider: str) -> dict:
         raise ValueError("PROVIDER_SCHEMA_MISMATCH")
     if not isinstance(m["experiment_id"], str) or not IDENTIFIER.fullmatch(m["experiment_id"]):
         raise ValueError("EXPERIMENT_ID_INVALID")
-    if m["accelerator"] not in PROVIDERS[provider]:
+    if not isinstance(m["accelerator"], str) or m["accelerator"] not in PROVIDERS[provider]:
         raise ValueError("ACCELERATOR_NOT_ALLOWLISTED")
     if type(m["max_runtime_seconds"]) is not int or not 60 <= m["max_runtime_seconds"] <= 3600:
         raise ValueError("RUNTIME_BOUND_INVALID")
